@@ -94,7 +94,7 @@ Tag/block names are encoded into single letter prefix followed immediately by ta
 | `base_dir`    | `dir`  |  | base directory of image files |
 | `output_path` | `path` |  | output files path (use template). If set to existing directory copies the structure of base directory. |
 | `--tempdir`   | `dir`  | _deepest already existing directory in output path before template variable resolution_ | directory to store temporary files |
-| `--exiftool`  | `path` | `None` | path to exiftool |
+| `--exiftool`  | `path` | _<script_dir> -> PATH_ | path to exiftool |
 | `--dirdepth`  | `int`  | `-1` | max directory depth (-1 for no limit) |
 | `--metafile`  | `path` | `metadata.txt` | metafile path  |
 | `--wildcards` | `str`  | `*.tif,*.tiff` | comma-separated list of file patterns |
