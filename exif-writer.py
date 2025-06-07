@@ -536,7 +536,7 @@ def metadata_get_path(input_path: Path, base_dir: Path):
                 if not (-24 <= datetime_original_offset[0] <= 24): raise ValueError("Error! Datetime offset hours must within ±24.")
                 if not (0 <= datetime_original_offset[1] <= 59): raise ValueError("Error! Datetime offset minutes must be between 0 and 59.")
             continue
-        #image crop: "C<left>[-<top>[-<width>[-<height>]]]"
+        #image crop: "C<LEFT>[-<TOP>[-<WIDTH>[-<HEIGHT>]]]"
         if entry.startswith('C'):
             entry_value = entry[1:]
             crop = entry_value.split("-")
@@ -573,7 +573,7 @@ def metadata_get_path(input_path: Path, base_dir: Path):
             if len(entry_value) > 0: aperture = str2float(entry_value)
             else:  raise ValueError("Error! Aperture value not specified.")
             continue
-        #exposure time: "T<EXPOSURE_TIME{<TIME_IN_SECONDS>|'<DENOMITATOR>}>"
+        #exposure time: "T<EXPOSURE_TIME{<TIME_IN_SECONDS>|'<DENOMINATOR>}>"
         if entry.startswith('T'):
             entry_value = entry[1:]
             if entry_value.startswith("'"):
@@ -583,13 +583,13 @@ def metadata_get_path(input_path: Path, base_dir: Path):
                 #value in seconds
                 exposure_time = str2float(entry_value)
             continue
-        #ISO: "I<VALUE>"
+        #ISO: "I<ISO_VALUE>"
         if entry.startswith('I'):
             entry_value = entry[1:]
             iso = str2int(entry_value)
             input_filename_metadata.remove(entry)
             continue
-        #lens focal length: "L<VALUE>"
+        #lens focal length: "L<FOCAL_LENGTH>"
         if entry.startswith('L'):
             entry_value = entry[1:]
             lens_focal_length = str2int(entry_value)
@@ -602,7 +602,7 @@ def metadata_get_path(input_path: Path, base_dir: Path):
             if camera[0] != "": camera_model = camera[0]
             if len(camera) > 1 and camera[1] != "": camera_maker = camera[1]
             continue
-        #orientation: "O<VALUE{<MODE>|90CW|90CCW|180}>"
+        #orientation: "O<VALUE{<CODE>|90CW|90CCW|180}>"
         if entry.startswith('O'):
             entry_value = entry[1:]
             if   entry_value == "90CW":  orientation = 6
@@ -625,7 +625,7 @@ def metadata_get_path(input_path: Path, base_dir: Path):
         if entry.startswith('H'):
             image_title = entry[1:].replace('&#95;', '_')
             continue
-        #GPS: "G<LATITUDE_SDEG>,<LONGITUDE_SDEG>[,<ALTITUDE_M>]"
+        #GPS: "G<{+|-|N|S}LATITUDE_DEG>,<{+|-|E|W}LONGITUDE_DEG>[,<ALTITUDE_M>]"
         if entry.startswith('G'):
             entry_value = entry[1:].replace(' ', '')
             gps_location = entry_value.split(",")
@@ -939,7 +939,7 @@ def process_file(input_path: Path, output_path: Path, metadata: dict, temp_dir: 
     shutil.move(temp_path, output_path)
 
     #remove all extra tags from metadata
-    delete_keys_with_prefixes(metadata, ['ImageTransform:', 'Script', 'Scanner:', 'ImageHistory:', 'Extra:'])
+    delete_keys_with_prefixes(metadata, ['ImageTransform:', 'Script:', 'Scanner:', 'ImageHistory:', 'Extra:'])
 
     #write EXIF data to image file
     args = ['-E', '-overwrite_original']
@@ -986,10 +986,10 @@ def process_file(input_path: Path, output_path: Path, metadata: dict, temp_dir: 
 
 def main():
     #parse call arguments
-    parser = argparse.ArgumentParser(description="EXIF-writer for scanned film images.")
+    parser = argparse.ArgumentParser(description="EXIF-writer for scanned images.")
     parser.add_argument("base_dir", type=Path, help="Base directory of image files.")
     parser.add_argument("output_path", type=Path, help="Output files path (use template). If set to existing directory copies the structure of base directory.")
-    parser.add_argument("--tempdir", type=Path, default=None, help="Directory to store temporary files [default: deepest already existing directory in output path before variables resolution].")
+    parser.add_argument("--tempdir", type=Path, default=None, help="Directory to store temporary files [default: deepest already existing directory in output path before template variable resolution].")
     parser.add_argument("--exiftool", type=Path, default=None, help="Path to exiftool.")
     parser.add_argument("--dirdepth", type=int, default=-1, help="Max directory depth (-1 for no limit) [default: -1].")
     parser.add_argument("--metafile", type=Path, default=Path("metadata.txt"), help="Metadata file name [default: 'metadata.txt'].")
