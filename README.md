@@ -6,8 +6,8 @@ This repo contains a set of scripts developed by me (and ChatGPT 😄) during th
 Since this was an archival task, all these scripts are tailored for 48-bit TIFF images. 24-bit TIFFs should work fine as well. Other image formats may partially work (if image transformations are not used) but not tested at all. As such archives usually contain many photos, all scripts work on a <ins>per-directory</ins> basis - <ins>not</ins> per-file.
 
 The scanner I used was _"Nikon COOLSCAN IV ED"_ with its _"Nikon Scan 4.0.2 W"_ software so all metadata processing related to the scanner is adjusted for that particular set. Other combinations may still work but code alterations may be required.
-- **_exif-writer.py_** - <ins>non-destructively</ins> crops/rotates/flips images and inserts EXIF metadata in them.
-- **_crop-finder.py_** - finds masked area (which contains actual image, leaving excess margins out) in the image, lists it into csv file and adds crop data into original images filenames.
+- [**_exif-writer.py_**](#exifwriter) - <ins>non-destructively</ins> crops/rotates/flips images and inserts EXIF metadata in them.
+- [**_crop-finder.py_**](#cropfinder) - finds masked area (which contains actual image, leaving excess margins out) in the image, lists it into csv file and adds crop data into original images filenames.
 - **_scandata-lister.py_** - lists metadata related to the scanner (scan date, scanner model, image size, resolution, analog gain, etc.) into single csv file.
 - **_xmp-extractor.py_** - extracts XMP tag contents (which contains ACR develop settings) into sidecar xmp file. Usefull to fix shitty Adobe policy of storing develop settings exclusively inside original TIFF files wrecking EXIF data in the process.
 
@@ -16,6 +16,7 @@ These scripts were developed for a one-off task and are tailored to specific inp
 
 ---
 
+<a name="exifwriter"></a>
 ## exif-writer.py
 The main script from the set. **Non-destructively** crops/rotates/flips images and inserts EXIF metadata in them.
 
@@ -107,6 +108,7 @@ Template variables can (and should) be used as an output path. You can use any e
 
 ---
 
+<a name="cropfinder"></a>
 ## crop-finder.py
 My original plan during the scanning process was to crop out the scanner's extra margins using some third-party software with a convenient GUI. But in reality, I ran into several issues — some software doesn’t fully support 48-bit images, and some re-encodes the image data entirely during the process. So, I created this script to assist with that task.
 
@@ -131,11 +133,3 @@ Repeat this process for all image files, and then run this script on them. It wi
 | `--unname` | `dir` |  | Revert crop-data-based renaming of files. Provide path to base directory |
 | `--crop-color` | `R,G,B`  | `0,0,0` | RGB color used for crop mask. Use values consistent with image color depth |
 | `--check-multiple` | `int`  | `8` | check that width and height are divisible by N |
-
-
-
-
-
-
-
-
