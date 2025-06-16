@@ -123,12 +123,13 @@ exif_gps_processingmethod_enum = {
 
 #metadata - default values
 metadata_default = {
-    'Script:LockTagList'        : False,                        #lock tag list (only initial tags listed here are allowed to be in final metadata, addition of tags groups which will be stripped before writing to image file are allowed though)
+    'Script:LockTagList'        : False,                        #n/a    : bool                              - lock tag list (only initial tags listed here are allowed to be in final metadata, addition of tags groups which will be stripped before writing to image file are allowed though)
     #Image transformations
-    'ImageTransform:Enabled'    : False,                        #transform is disabled by default, if transform data will be found it will be enabled
-    'ImageTransform:Crop'       : [0, 0, 4096, 2656],           #resulting crop area [<origin_left>, <origin_top>, <area_width>, <area_height>]
-    'ImageTransform:Rotate'     : 0,                            #rotation angle {0|±90|±270}
-    'ImageTransform:Flip'       : [False, False],               #flip [<horizontal>, <vertical>]
+    'ImageTransform:Enabled'    : False,                        #n/a    : bool                              - transform is disabled by default, if transform data will be found it will be enabled
+    'ImageTransform:Crop'       : [0, 0, 4096, 2656],           #n/a    : int[4]                            - resulting crop area [<origin_left>, <origin_top>, <area_width>, <area_height>]
+    'ImageTransform:Rotate'     : 0,                            #n/a    : int {0|±90|±270}                  - rotation angle 
+    'ImageTransform:Flip'       : [False, False],               #n/a    : bool[2]                           - flip [<horizontal>, <vertical>]
+    'ImageTransform:Compression': ['none', None],               #n/a    : [string, dict]                    - compression (imagecodecs may be required), passed to tifffile.imwrite() as [<compression>, <compressionargs>], check tifffile.COMPRESSION for available options
     #EXIF
     'DocumentName'              : Marker.AUTO,                  #0x010D : string                            - original file name (consists of film ID, frame number, strip number, etc.)
     'ImageDescription'          : "",                           #0x010E : string                            - description of an image (scene or object description, etc.)
@@ -405,41 +406,43 @@ def metadata_get_scanner(file_path):
     with exiftool.ExifToolHelper(executable = exiftool_exe) as exif:
         #Scanner model from 0x0110 'Model' and software from 0x0131 'Software'
         output = exif.get_tags(file_path, ['Model', 'Software'])[0]
-        result['Scanner:Model'] = output['EXIF:Model']
-        result['Scanner:Software:Name'] = output['EXIF:Software']
+        if 'EXIF:Model' in output: result['Scanner:Model'] = output['EXIF:Model']
+        if 'EXIF:Software' in output: result['Scanner:Software:Name'] = output['EXIF:Software']
         
-        #NikonScanIFD from Nikon MakerNotes
-        output = exif.get_tags(file_path, 'NikonScan:all')[0]
-        for tag_name, value in output.items():
-            if tag_name == 'SourceFile': continue  #skip this key entirely
-            if tag_name.startswith('MakerNotes:'): tag_name = tag_name[len('MakerNotes:'):]  #remove prefix
-            result['Scanner:Software:' + tag_name] = value
+        if 'Scanner:Model' in result and 'Scanner:Software:Name' in result:
+            if "nikon" in result['Scanner:Model'].lower() and 'nikon' in result['Scanner:Software:Name'].lower():
+                #NikonScanIFD from Nikon MakerNotes
+                output = exif.get_tags(file_path, 'NikonScan:all')[0]
+                for tag_name, value in output.items():
+                    if tag_name == 'SourceFile': continue  #skip this key entirely
+                    if tag_name.startswith('MakerNotes:'): tag_name = tag_name[len('MakerNotes:'):]  #remove prefix
+                    result['Scanner:Software:' + tag_name] = value
 
-        #fix NikonScan bug for negative gain values (negative values higher than they set in GUI by 0.01 )
-        if "Nikon Scan" in result['Scanner:Software:Name']:
-            if 'Scanner:Software:MasterGain' in result:
-                value = result['Scanner:Software:MasterGain']
-                if value < 0: value -= 0.01
-                result['Scanner:Software:MasterGain'] = format(value, "g")
-            if 'Scanner:Software:ColorGain' in result:
-                try:
-                    color_gain = [float(part) for part in result['Scanner:Software:ColorGain'].split()]
-                    result['Scanner:Software:ColorGain'] = ""
-                    for value in color_gain:
+                #fix NikonScan bug for negative gain values (negative values higher than they set in GUI by 0.01 )
+                if "Nikon Scan" in result['Scanner:Software:Name']:
+                    if 'Scanner:Software:MasterGain' in result:
+                        value = result['Scanner:Software:MasterGain']
                         if value < 0: value -= 0.01
-                        result['Scanner:Software:ColorGain'] += format(value, "g") + ', '
-                    result['Scanner:Software:ColorGain'] = result['Scanner:Software:ColorGain'].strip(', ')
-                except ValueError:
-                    raise ValueError("Error! Can't parse NikonScan:ColorGain value.")        
+                        result['Scanner:Software:MasterGain'] = format(value, "g")
+                    if 'Scanner:Software:ColorGain' in result:
+                        try:
+                            color_gain = [float(part) for part in result['Scanner:Software:ColorGain'].split()]
+                            result['Scanner:Software:ColorGain'] = ""
+                            for value in color_gain:
+                                if value < 0: value -= 0.01
+                                result['Scanner:Software:ColorGain'] += format(value, "g") + ', '
+                            result['Scanner:Software:ColorGain'] = result['Scanner:Software:ColorGain'].strip(', ')
+                        except ValueError:
+                            raise ValueError("Error! Can't parse NikonScan:ColorGain value.")        
 
-        #insert AutoExposure parameter (equals True by default)
-        if "Nikon Scan" in result['Scanner:Software:Name']:
-            if 'Scanner:Software:MasterGain' in result:
-                tmp = {}
-                for tag_name, value in result.items():
-                    if tag_name == 'Scanner:Software:MasterGain': tmp['Scanner:Software:AutoExposure'] = True
-                    tmp[tag_name] = value
-                result = tmp
+                #insert AutoExposure parameter (equals True by default)
+                if "Nikon Scan" in result['Scanner:Software:Name']:
+                    if 'Scanner:Software:MasterGain' in result:
+                        tmp = {}
+                        for tag_name, value in result.items():
+                            if tag_name == 'Scanner:Software:MasterGain': tmp['Scanner:Software:AutoExposure'] = True
+                            tmp[tag_name] = value
+                        result = tmp
     return result
 
 #Get metadata from a file
@@ -489,6 +492,7 @@ def metadata_get_path(input_path: Path, base_dir: Path):
     datetime_original, datetime_original_offset = None, None
     crop                        = None
     rotate, flip                = None, None
+    compression                 = None
     flash                       = None
     aperture                    = None
     exposure_time               = None
@@ -560,6 +564,10 @@ def metadata_get_path(input_path: Path, base_dir: Path):
             elif entry_value == "90CCW": rotate = 270
             else:
                 rotate = str2int(entry_value)
+            continue
+        #image compression: "Z<COMPRESSION>"
+        if entry.startswith('Z'):
+            compression = entry[1:]
             continue
         #flash: "F<EXIF_FLASH_VALUE_NUMBER>"
         if entry.startswith('F'):
@@ -666,7 +674,9 @@ def metadata_get_path(input_path: Path, base_dir: Path):
     if flip is not None:
         result['ImageTransform:Flip'] = flip
         result['ImageTransform:Enabled'] = True
-
+    if compression is not None:
+        result['ImageTransform:Compression'] = compression
+        result['ImageTransform:Enabled'] = True
     if film_id is not None:
         result['ReelName'] = film_id
         result['Extra:FilmID'] = film_id
@@ -903,14 +913,21 @@ def process_file(input_path: Path, output_path: Path, metadata: dict, temp_dir: 
     if metadata.pop('ImageTransform:Enabled', False):
         #image tramsformations are needed, perform them and save result to a new file
         #get transform parameters
-        image_transform_crop   = metadata.pop('ImageTransform:Crop', [0, 0, 0, 0])
-        image_transform_rotate = metadata.pop('ImageTransform:Rotate', 0)
-        image_transform_flip   = metadata.pop('ImageTransform:Flip', [False, False])
+        image_transform_crop        = metadata.pop('ImageTransform:Crop', [0, 0, 0, 0])
+        image_transform_rotate      = metadata.pop('ImageTransform:Rotate', 0)
+        image_transform_flip        = metadata.pop('ImageTransform:Flip', [False, False])
+        image_transform_compression = metadata.pop('ImageTransform:Compression', ['none', None])
+        if isinstance(image_transform_compression, (list, tuple)) and len(image_transform_compression) > 1:
+            image_transform_compressionargs = image_transform_compression[1]
+            image_transform_compression = image_transform_compression[0]
+        else:
+            image_transform_compressionargs = None
+
         #perform transformations
         image = tifffile.imread(input_path)
         image = image_transform(image, image_transform_crop[0], image_transform_crop[1], image_transform_crop[2], image_transform_crop[3], image_transform_rotate, image_transform_flip[0], image_transform_flip[1])
         os.makedirs(os.path.dirname(temp_path), exist_ok = True)
-        tifffile.imwrite(temp_path, image, photometric='rgb')
+        tifffile.imwrite(temp_path, image, photometric='rgb', compression=image_transform_compression, compressionargs=image_transform_compressionargs)
 
         #restore original metadata in a new image file
         with exiftool.ExifTool(executable = exiftool_exe) as exif:
@@ -989,11 +1006,11 @@ def main():
     parser = argparse.ArgumentParser(description="EXIF-writer for scanned images.")
     parser.add_argument("base_dir", type=Path, help="Base directory of image files.")
     parser.add_argument("output_path", type=Path, help="Output files path (use template). If set to existing directory copies the structure of base directory.")
-    parser.add_argument("--tempdir", type=Path, default=None, help="Directory to store temporary files [default: deepest already existing directory in output path before template variable resolution].")
-    parser.add_argument("--exiftool", type=Path, default=None, help="Path to exiftool.")
-    parser.add_argument("--dirdepth", type=int, default=-1, help="Max directory depth (-1 for no limit) [default: -1].")
-    parser.add_argument("--metafile", type=Path, default=Path("metadata.txt"), help="Metadata file name [default: 'metadata.txt'].")
-    parser.add_argument("--wildcards", type=str, default="*.tif,*.tiff", help="Comma-separated list of file patterns [default: '*.tif,*.tiff'].")
+    parser.add_argument("--tempdir", type=Path, default=None, metavar="<dir>", help="Directory to store temporary files [default: deepest already existing directory in output path before template variable resolution].")
+    parser.add_argument("--exiftool", type=Path, default=None, metavar="<file>", help="Path to exiftool.")
+    parser.add_argument("--dirdepth", type=int, default=-1, metavar="<int>", help="Max directory depth (-1 for no limit) [default: -1].")
+    parser.add_argument("--metafile", type=Path, default=Path("metadata.txt"), metavar="<file>", help="Metadata file name [default: 'metadata.txt'].")
+    parser.add_argument("--wildcards", type=str, default="*.tif,*.tiff", metavar="<str>", help="Comma-separated list of file patterns [default: '*.tif,*.tiff'].")
     args = parser.parse_args()
 
     wildcards = [w.strip() for w in args.wildcards.split(",")]
