@@ -11,6 +11,9 @@ from enum import Enum
 import locale, copy
 import ast, re
 
+_module_date = datetime(2025, 6, 19)
+_module_designer = "Alexander Taluts"
+
 #Exiftool path
 exiftool_exe = None
 
@@ -159,8 +162,8 @@ metadata_default = {
     'ExifImageWidth'            : Marker.AUTO,                  #0xA002 : int                               - image width in EXIF (should be filled by this script)
     'ExifImageHeight'           : Marker.AUTO,                  #0xA003 : int                               - image height in EXIF (should be filled by this script)
     'FileSource'                : exif_filesource_enum[1],      #0xA300 : string {"<dict>"}                 - image source (use value from dictionary)
-    'ExposureMode'              : Marker.SKIP,                  #0xA402 : string {"<dict>"}                 - exposure mode (not applicable for my case) (use value from dictionary)
-    'WhiteBalance'              : Marker.SKIP,                  #0xA403 : string {"<dict>"}                 - white balance mode (not applicable for my case) (use value from dictionary)
+    'ExposureMode'              : Marker.SKIP,                  #0xA402 : string {"<dict>"}                 - exposure mode (use value from dictionary)
+    'WhiteBalance'              : Marker.SKIP,                  #0xA403 : string {"<dict>"}                 - white balance mode (use value from dictionary)
     'FocalLengthIn35mmFormat'   : Marker.OPTIONAL,              #0xA405 : int                               - focal length in mm of the lens CONVERTED to 35mm equivalent
     'OwnerName'                 : Marker.SKIP,                  #0xA430 : string                            - camera owner name
     'SerialNumber'              : Marker.SKIP,                  #0xA431 : string                            - camera body serial number
@@ -183,14 +186,15 @@ metadata_default = {
     'GPSAltitude'               : Marker.OPTIONAL,              #0x0006 : float                             - GPS altitude value
     'GPSProcessingMethod'       : Marker.AUTO,                  #0x001B : string {"<dict>"}                 - method used to determine location (use value from dictionary)
     #extra tags for internal purposes (will be stripped before writing metadata into a file)
-    'Extra:FilmID'              : "",                           #n/a    : string                            - film reel name/identifier
-    'Extra:FilmFrameNumber'     : 0,                            #n/a    : int                               - frame number on a film roll
-    'Extra:StripID'             : "",                           #n/a    : string                            - film strip name/identifier
-    'Extra:StripFrameNumber'    : 0,                            #n/a    : int                               - frame number on a film strip
+    'Extra:FileID'              : "",                           #n/a    : string                            - file name/identifier
     'Extra:FilePath'            : "",                           #n/a    : string                            - file full path relative to base directory
     'Extra:FileDirectory'       : "",                           #n/a    : string                            - file directory relative to base directory
     'Extra:FileNameBase'        : "",                           #n/a    : string                            - filename without extension
     'Extra:FileNameExtension'   : "",                           #n/a    : string                            - filename extension
+    'Extra:FilmID'              : "",                           #n/a    : string                            - film reel name/identifier
+    'Extra:FilmFrameNumber'     : 0,                            #n/a    : int                               - frame number on a film roll
+    'Extra:StripID'             : "",                           #n/a    : string                            - film strip name/identifier
+    'Extra:StripFrameNumber'    : 0,                            #n/a    : int                               - frame number on a film strip
 }
 
 #Get exiftool executable name
@@ -481,73 +485,90 @@ def metadata_get_file(file_path, strip_whitespace = True, encoding = None):
 
 #Get metadata from paths
 def metadata_get_path(input_path: Path, base_dir: Path):
-    file_name = input_path.stem
-    file_ext = input_path.suffix.replace(os.path.extsep, '')
+    #list of variables
+    #--- filename
+    file_id                   = None        #file identifier
+    file_name, file_ext       = None, None  #file basename and extension
+    file_relpath, file_reldir = None, None  #file path and directory relative to base directory
+    #--- identifiers
+    film_id, film_frame     = None, None    #film identifier and frame number in film
+    strip_id, strip_frame   = None, None    #film strip identifier and frame number on that strip
+    image_number            = None          #image number
+    #--- image transformations
+    crop                    = None          #image crop
+    rotate, flip            = None, None    #image rotation and flip
+    compression             = None          #image compression
+    #--- camera settings
+    exposure_time           = None          #exposure time
+    aperture                = None          #aperture
+    iso                     = None          #iso
+    flash                   = None          #flash
+    orientation             = None          #orientation
+    lens_focal_length       = None          #lens focal length
+    #--- environment
+    camera_maker, camera_model                   = None, None           #camera model and maker
+    datetime_original, datetime_original_offset  = None, None           #datetime of original image being taken + timezone offset
+    gnss_latitude, gnss_longitude, gnss_altitude = None, None, None     #GNSS coordinates and altitude
+    #--- description
+    image_description       = None          #image description
+    image_title             = None          #image title
+    user_comment            = None          #user comment
+
+    #set path variables
+    file_name    = input_path.stem
+    file_ext     = input_path.suffix.replace(os.path.extsep, '')
     file_relpath = input_path.relative_to(base_dir)
-    file_reldir = file_relpath.parent
+    file_reldir  = file_relpath.parent
+
+    #split original basename and metadata
+    if file_name.find('__') < 0:
+        #no metadata
+        file_id = file_name
+        metadata = ""
+    else:
+        #metadata present
+        basename_metadata = file_name.rsplit('__', 1)
+        if len(basename_metadata[0]) > 0: file_id = basename_metadata[0]
+        metadata = basename_metadata[1]
 
     #get metadata from input filename
-    input_filename_metadata = file_name.split('_')
-    strip_id, strip_frame  = None, None
-    datetime_original, datetime_original_offset = None, None
-    crop                        = None
-    rotate, flip                = None, None
-    compression                 = None
-    flash                       = None
-    aperture                    = None
-    exposure_time               = None
-    iso                         = None
-    lens_focal_length           = None
-    camera_maker, camera_model  = None, None
-    orientation                 = None
-    user_comment                = None
-    image_description           = None
-    image_title                 = None
-    gps_latitude, gps_longitude, gps_altitude = None, None, None
-    #--- film identifier and frame number in film: "<FILM_ID>-<FRAME_NUM>"
-    film_id, film_frame = input_filename_metadata.pop(0).split("-", 2)
-    film_frame = str2int(film_frame)
-    for entry in input_filename_metadata:
-        #film strip identifier and frame number on that strip: "S<STRIP_ID>-<FRAME_NUM_IN_STRIP>"
+    metadata = metadata.split('_')
+    for entry in metadata:
+    #film identifier and frame number in film: "F<FILM_ID>[-<FRAME_NUM_ON_FILM>]"
+        if entry.startswith('F'):
+            entry_value = entry[1:]
+            film_id_frame = entry_value.rsplit("-", 1)
+            film_id = film_id_frame[0]
+            if len(film_id_frame) > 1:
+                if film_id_frame[1]: film_frame = str2int(film_id_frame[1])
+                else: raise ValueError("Error! Frame number on film value not specified.")
+            continue
+        #film strip identifier and frame number on that strip: "S<STRIP_ID>[-<FRAME_NUM_ON_STRIP>]"
         if entry.startswith('S'):
             entry_value = entry[1:]
-            strip_id, strip_frame = entry_value.split("-", 2)
-            strip_frame = str2int(strip_frame)
+            strip_id_frame = entry_value.rsplit("-", 1)
+            strip_id = strip_id_frame[0]
+            if len(strip_id_frame) > 1:
+                if strip_id_frame[1]: strip_frame = str2int(strip_id_frame[1])
+                else: raise ValueError("Error! Frame number on strip value not specified.")
             continue
-        #datetime of original image being taken + timezone offset: "D<YYYY>[-<MM>[-<DD>[-<hh>[-<mm>[-<ss>[@<tzo_hh>[-<tzo_mm>]]]]]]]"
-        if entry.startswith('D'):
+        #image number: "N<IMAGE_NUMBER>"
+        if entry.startswith('N'):
             entry_value = entry[1:]
-            tmp = entry_value.split("@", 2)
-            datetime_original = tmp[0].strip()
-            if len(tmp) > 1 and len(tmp[1].strip()) > 0: datetime_original_offset = tmp[1].strip()
-            if len(datetime_original) > 0:
-                #datetime
-                datetime_original = datetime_original.split("-")
-                for i, value in enumerate(datetime_original):
-                    datetime_original[i] = str2int(datetime_original[i])
-                if len(datetime_original) < 6: datetime_original += [0] * (6 - len(datetime_original))
-                #--- check values (to remain correct size)
-                if not (0 <= datetime_original[0] <= 9999): raise ValueError("Error! Datetime year must be 4 digits long.")
-                for value in datetime_original[1:]:
-                    if not (0 <= value <= 99): raise ValueError("Error! Datetime component value (except year) must be 2 digits long.")           
-            #timezone offset
-            if datetime_original_offset is not None:
-                datetime_original_offset = datetime_original_offset.split("-", 2)
-                for i, value in enumerate(datetime_original_offset):
-                    datetime_original_offset[i] = str2int(datetime_original_offset[i])
-                if len(datetime_original_offset) < 2: datetime_original_offset += [0] * (2 - len(datetime_original_offset))
-                #check values
-                if not (-24 <= datetime_original_offset[0] <= 24): raise ValueError("Error! Datetime offset hours must within ±24.")
-                if not (0 <= datetime_original_offset[1] <= 59): raise ValueError("Error! Datetime offset minutes must be between 0 and 59.")
+            if entry_value: image_number = str2int(entry_value)
+            else: raise ValueError("Error! Image number value not specified.")
             continue
         #image crop: "C<LEFT>[-<TOP>[-<WIDTH>[-<HEIGHT>]]]"
         if entry.startswith('C'):
             entry_value = entry[1:]
-            crop = entry_value.split("-")
-            for i, value in enumerate(crop):
-                crop[i] = str2int(crop[i])
-            for value in crop:
-                if value < 0: raise ValueError("Error! Crop values can't be negative.")
+            if entry_value:
+                crop = entry_value.split("-")
+                for i, value in enumerate(crop):
+                    crop[i] = str2int(crop[i])
+                for value in crop:
+                    if value < 0: raise ValueError("Error! Crop values can't be negative.")
+            else:
+                raise ValueError("Error! Crop value not specified.")
             continue
         #image rotation and flip: "R<ROTATION_CW{ANGLE|90CW|90CCW}>[<FLIP{H|V}>]"
         if entry.startswith('R'):
@@ -565,106 +586,155 @@ def metadata_get_path(input_path: Path, base_dir: Path):
             else:
                 rotate = str2int(entry_value)
             continue
-        #image compression: "Z<COMPRESSION>"
+        #image compression: "Z<COMPRESSION_ID>"
         if entry.startswith('Z'):
-            compression = entry[1:]
-            continue
-        #flash: "F<EXIF_FLASH_VALUE_NUMBER>"
-        if entry.startswith('F'):
             entry_value = entry[1:]
-            if len(entry_value) > 0: flash = str2int(entry_value)
-            else:  raise ValueError("Error! Flash value not specified.")
-            continue
-        #aperture: "A<F-NUMBER>"
-        if entry.startswith('A'):
-            entry_value = entry[1:]
-            if len(entry_value) > 0: aperture = str2float(entry_value)
-            else:  raise ValueError("Error! Aperture value not specified.")
+            if entry_value: compression = entry_value
+            else: raise ValueError("Error! Comperession identifier not specified.")
             continue
         #exposure time: "T<EXPOSURE_TIME{<TIME_IN_SECONDS>|'<DENOMINATOR>}>"
         if entry.startswith('T'):
             entry_value = entry[1:]
-            if entry_value.startswith("'"):
-                #value as fraction denominator (1/x)
-                exposure_time = -str2int(entry_value[1:])
+            if entry_value:
+                if entry_value.startswith("'"):
+                    #value as fraction denominator (1/x)
+                    exposure_time = -str2int(entry_value[1:])
+                else:
+                    #value in seconds
+                    exposure_time = str2float(entry_value)
             else:
-                #value in seconds
-                exposure_time = str2float(entry_value)
+                 raise ValueError("Error! Exposure time value not specified.")
+            continue
+        #aperture: "A<F-NUMBER>"
+        if entry.startswith('A'):
+            entry_value = entry[1:]
+            if entry_value: aperture = str2float(entry_value)
+            else: raise ValueError("Error! Aperture value not specified.")
             continue
         #ISO: "I<ISO_VALUE>"
         if entry.startswith('I'):
             entry_value = entry[1:]
-            iso = str2int(entry_value)
-            input_filename_metadata.remove(entry)
+            if entry_value: iso = str2int(entry_value)
+            else: raise ValueError("Error! ISO value not specified.")
             continue
-        #lens focal length: "L<FOCAL_LENGTH>"
-        if entry.startswith('L'):
+        #flash: "X<EXIF_FLASH_VALUE_NUMBER>"
+        if entry.startswith('X'):
             entry_value = entry[1:]
-            lens_focal_length = str2int(entry_value)
-            input_filename_metadata.remove(entry)
-            continue
-        #camera model and maker: "M[<MODEL>][@<MAKER>]"
-        if entry.startswith('M'):
-            entry_value = entry[1:]
-            camera = entry_value.split("@", 2)
-            if camera[0] != "": camera_model = camera[0]
-            if len(camera) > 1 and camera[1] != "": camera_maker = camera[1]
+            if entry_value: flash = str2int(entry_value)
+            else: raise ValueError("Error! Flash value not specified.")
             continue
         #orientation: "O<VALUE{<CODE>|90CW|90CCW|180}>"
         if entry.startswith('O'):
             entry_value = entry[1:]
-            if   entry_value == "90CW":  orientation = 6
-            elif entry_value == "90CCW": orientation = 8
-            elif entry_value == "180":   orientation = 3
+            if entry_value:
+                if   entry_value == "90CW":  orientation = 6
+                elif entry_value == "90CCW": orientation = 8
+                elif entry_value == "180":   orientation = 3
+                else:
+                    orientation = str2int(entry_value)
+                if not (1 <= orientation <= 8):
+                    raise ValueError("Error! Invalid orientation value.")
+            else: raise ValueError("Error! Orientation value not specified.")
+            continue
+        #lens focal length: "L<FOCAL_LENGTH>"
+        if entry.startswith('L'):
+            entry_value = entry[1:]
+            if entry_value: lens_focal_length = str2int(entry_value)
+            else: raise ValueError("Error! Lens focal length value not specified.")
+            continue
+        #camera model and maker: "M[<MODEL>][@<MAKER>]"
+        if entry.startswith('M'):
+            entry_value = entry[1:]
+            camera = entry_value.split("@", 1)
+            if camera[0]: camera_model = camera[0]
+            if len(camera) > 1 and camera[1]: camera_maker = camera[1]
+            continue
+        #datetime of original image being taken + timezone offset: "D<YYYY>[-<MM>[-<DD>[-<hh>[-<mm>[-<ss>[@<tzo_hh>[-<tzo_mm>]]]]]]]"
+        if entry.startswith('D'):
+            entry_value = entry[1:]
+            if entry_value:
+                tmp = entry_value.split("@", 1)
+                datetime_original = tmp[0].strip()
+                if len(tmp) > 1 and tmp[1].strip(): datetime_original_offset = tmp[1].strip()
+                if datetime_original:
+                    #datetime
+                    datetime_original = datetime_original.split("-")
+                    for i, value in enumerate(datetime_original):
+                        datetime_original[i] = str2int(datetime_original[i])
+                    if len(datetime_original) < 6: datetime_original += [0] * (6 - len(datetime_original))
+                    #--- check values (to remain correct size)
+                    if not (0 <= datetime_original[0] <= 9999): raise ValueError("Error! Datetime year must be 4 digits long.")
+                    for value in datetime_original[1:]:
+                        if not (0 <= value <= 99): raise ValueError("Error! Datetime component value (except year) must be 2 digits long.")           
+                #timezone offset
+                if datetime_original_offset is not None:
+                    datetime_original_offset = datetime_original_offset.split("-", 1)
+                    for i, value in enumerate(datetime_original_offset):
+                        datetime_original_offset[i] = str2int(datetime_original_offset[i])
+                    if len(datetime_original_offset) < 2: datetime_original_offset += [0] * (2 - len(datetime_original_offset))
+                    #check values
+                    if not (-24 <= datetime_original_offset[0] <= 24): raise ValueError("Error! Datetime offset hours must within ±24.")
+                    if not (0 <= datetime_original_offset[1] <= 59): raise ValueError("Error! Datetime offset minutes must be between 0 and 59.")
             else:
-                orientation = str2int(entry_value)
-            if not (1 <= orientation <= 8):
-                raise ValueError("Error! Invalid orientation value.")
+                raise ValueError("Error! Datetime value not specified.")
             continue
-        #user comment: "U<USER_COMMENT>" (use &#95; if you need underscore in a value)
-        if entry.startswith('U'):
-            user_comment = entry[1:].replace('&#95;', '_')
-            continue
-        #image description "N<IMAGE_DESCRIPTION>" (use &#95; if you need underscore in a value)
-        if entry.startswith('N'):
-            image_description = entry[1:].replace('&#95;', '_')
+        #GNSS coordinates and altitude: "G<{+|-|N|S}LATITUDE_DEG>,<{+|-|E|W}LONGITUDE_DEG>[,<ALTITUDE_M>]"
+        if entry.startswith('G'):
+            entry_value = entry[1:].replace(' ', '')
+            gnss_location = entry_value.split(",")
+            if (2 <= len(gnss_location) <= 3):
+                gnss_sign = 1
+                if gnss_location[0].startswith('N'):
+                    gnss_location[0] = gnss_location[0][1:]
+                    gnss_sign = 1
+                elif gnss_location[0].startswith('S'):
+                    gnss_location[0] = gnss_location[0][1:]
+                    gnss_sign = -1
+                gnss_latitude = gnss_sign * str2float(gnss_location[0])
+                gnss_sign = 1
+                if gnss_location[1].startswith('E'):
+                    gnss_location[1] = gnss_location[1][1:]
+                    gnss_sign = 1
+                elif gnss_location[1].startswith('W'):
+                    gnss_location[1] = gnss_location[1][1:]
+                    gnss_sign = -1
+                gnss_longitude = gnss_sign * str2float(gnss_location[1])
+                if len(gnss_location) > 2:
+                    gnss_altitude = str2float(gnss_location[2])
+            else:
+                raise ValueError("Error! GPS location can't be parsed.")
             continue
         #image title "H<IMAGE_TITLE>" (use &#95; if you need underscore in a value)
         if entry.startswith('H'):
             image_title = entry[1:].replace('&#95;', '_')
             continue
-        #GPS: "G<{+|-|N|S}LATITUDE_DEG>,<{+|-|E|W}LONGITUDE_DEG>[,<ALTITUDE_M>]"
-        if entry.startswith('G'):
-            entry_value = entry[1:].replace(' ', '')
-            gps_location = entry_value.split(",")
-            if (2 <= len(gps_location) <= 3):
-                gps_sign = 1
-                if gps_location[0].startswith('N'):
-                    gps_location[0] = gps_location[0][1:]
-                    gps_sign = 1
-                elif gps_location[0].startswith('S'):
-                    gps_location[0] = gps_location[0][1:]
-                    gps_sign = -1
-                gps_latitude = gps_sign * str2float(gps_location[0])
-                gps_sign = 1
-                if gps_location[1].startswith('E'):
-                    gps_location[1] = gps_location[1][1:]
-                    gps_sign = 1
-                elif gps_location[1].startswith('W'):
-                    gps_location[1] = gps_location[1][1:]
-                    gps_sign = -1
-                gps_longitude = gps_sign * str2float(gps_location[1])
-                if len(gps_location) > 2:
-                    gps_altitude = str2float(gps_location[2])
-            else:
-                raise ValueError("Error! GPS location can't be parsed.")
+        #image description "N<IMAGE_DESCRIPTION>" (use &#95; if you need underscore in a value)
+        if entry.startswith('N'):
+            image_description = entry[1:].replace('&#95;', '_')
+            continue
+        #user comment: "U<USER_COMMENT>" (use &#95; if you need underscore in a value)
+        if entry.startswith('U'):
+            user_comment = entry[1:].replace('&#95;', '_')
             continue
 
     result = {}
+    #--- filename
+    if file_id is not None: result['Extra:FileID'] = file_id
     if file_name is not None: result['Extra:FileNameBase'] = file_name
     if file_ext is not None: result['Extra:FileNameExtension'] = file_ext
     if file_relpath is not None: result['Extra:FilePath'] = str(file_relpath)
     if file_reldir is not None: result['Extra:FileDirectory'] = str(file_reldir)
+    #--- identifiers
+    if film_id is not None:
+        result['ReelName'] = film_id
+        result['Extra:FilmID'] = film_id
+    if film_frame is not None:
+        result['ImageNumber'] = film_frame
+        result['Extra:FilmFrameNumber'] = film_frame
+    if strip_id is not None: result['Extra:StripID'] = strip_id
+    if strip_frame is not None: result['Extra:StripFrameNumber'] = strip_frame
+    if image_number is not None: result['ImageNumber'] = image_number
+    #--- image transformations
     if crop is not None:
         result['ImageTransform:Crop'] = crop
         result['ImageTransform:Enabled'] = True
@@ -677,35 +747,28 @@ def metadata_get_path(input_path: Path, base_dir: Path):
     if compression is not None:
         result['ImageTransform:Compression'] = compression
         result['ImageTransform:Enabled'] = True
-    if film_id is not None:
-        result['ReelName'] = film_id
-        result['Extra:FilmID'] = film_id
-    if film_frame is not None:
-        result['ImageNumber'] = film_frame
-        result['Extra:FilmFrameNumber'] = film_frame
-    if strip_id is not None: result['Extra:StripID'] = strip_id
-    if strip_frame is not None: result['Extra:StripFrameNumber'] = strip_frame
+    #--- camera settings
+    if exposure_time is not None:
+        if exposure_time >= 0: result['ExposureTime'] = exposure_time
+        else:                  result['ExposureTime'] = f"1/{-exposure_time}"
+    if aperture is not None: result['FNumber'] = aperture
+    if iso is not None: result['ISO'] = iso
+    if flash is not None: result['EXIF:Flash'] = exif_flash_enum[flash]
+    if orientation is not None: result['Orientation'] = exif_orientation_enum[orientation]
+    if lens_focal_length is not None: result['FocalLength'] = lens_focal_length
+    #--- environment
     if camera_maker is not None: result['Make'] = camera_maker
     if camera_model is not None: result['Model'] = camera_model
     if datetime_original is not None: result['DateTimeOriginal'] = f"{datetime_original[0]:04d}:{datetime_original[1]:02d}:{datetime_original[2]:02d} {datetime_original[3]:02d}:{datetime_original[4]:02d}:{datetime_original[5]:02d}"
     if datetime_original_offset is not None: result['OffsetTimeOriginal'] = f"{datetime_original_offset[0]:+03d}:{datetime_original_offset[1]:02d}"
-    if orientation is not None: result['Orientation'] = exif_orientation_enum[orientation]
-    if exposure_time is not None:
-        if exposure_time > 0: result['ExposureTime'] = exposure_time
-        else:                 result['ExposureTime'] = f"1/{-exposure_time}"
-        result['ShutterSpeedValue'] = result['ExposureTime']
-    if aperture is not None:
-        result['FNumber'] = aperture
-        result['ApertureValue'] = aperture
-    if iso is not None: result['ISO'] = iso
-    if flash is not None: result['EXIF:Flash'] = exif_flash_enum[flash]
-    if lens_focal_length is not None: result['FocalLength'] = lens_focal_length
-    if user_comment is not None: result['UserComment'] = user_comment
+    if gnss_latitude is not None: result['GPSLatitude'] = gnss_latitude
+    if gnss_longitude is not None: result['GPSLongitude'] = gnss_longitude
+    if gnss_altitude is not None: result['GPSAltitude'] = gnss_altitude
+    #--- description
     if image_description is not None: result['ImageDescription'] = image_description
     if image_title is not None: result['ImageTitle'] = image_title
-    if gps_latitude is not None: result['GPSLatitude'] = gps_latitude
-    if gps_longitude is not None: result['GPSLongitude'] = gps_longitude
-    if gps_altitude is not None: result['GPSAltitude'] = gps_altitude
+    if user_comment is not None: result['UserComment'] = user_comment
+
     return result
 
 #Update existing metadata
@@ -749,10 +812,10 @@ def metadata_autofill(file_path, metadata):
             metadata['OffsetTime'] = now_offset[:3] + ":" + now_offset[3:]
 
     if metadata.get('ShutterSpeedValue') == Marker.AUTO:
-        metadata['ShutterSpeedValue'] = metadata.get('ExposureTime', None)
+        metadata['ShutterSpeedValue'] = metadata.get('ExposureTime', Marker.SKIP)
 
     if metadata.get('ApertureValue') == Marker.AUTO:
-        metadata['ApertureValue'] = metadata.get('FNumber', None)
+        metadata['ApertureValue'] = metadata.get('FNumber', Marker.SKIP)
 
     if metadata.get('ExifImageWidth') == Marker.AUTO:
         with tifffile.TiffFile(file_path) as tif:
@@ -1003,7 +1066,7 @@ def process_file(input_path: Path, output_path: Path, metadata: dict, temp_dir: 
 
 def main():
     #parse call arguments
-    parser = argparse.ArgumentParser(description="EXIF-writer for scanned images.")
+    parser = argparse.ArgumentParser(description=f"EXIF-writer - a tool for scanned images, v.{_module_date:%Y-%m-%d} by {_module_designer}.")
     parser.add_argument("base_dir", type=Path, help="Base directory of image files.")
     parser.add_argument("output_path", type=Path, help="Output files path (use template). If set to existing directory copies the structure of base directory.")
     parser.add_argument("--tempdir", type=Path, default=None, metavar="<dir>", help="Directory to store temporary files [default: deepest already existing directory in output path before template variable resolution].")

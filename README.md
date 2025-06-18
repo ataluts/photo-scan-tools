@@ -65,28 +65,35 @@ Ordinary python dictionary.
 Tag name and value are set by `<tag_name> = <tag_value>` pair on a dedicated line. All lines starting with `#` are ignored. Values are parsed using `ast.literal_eval()` so data types are recognized and complex structures can be used. For example `ImageTransform:Compression = "jpeg", {'level': 90}` will be parsed correctly as a tuple containing a string and a dictionary. Also Markers can be used here by assigning their enum values. For example `MakerNotes:All = <DELETE>` will set `MakerNotes:All` tag to `Marker.DELETE` value which will delete it from the resulting file.
 
 ##### in filename:
-Tag/block names are encoded into single letter prefix followed immediately by tag/block value in its dedicated format. Different tags/blocks are separated by `_` (underscore) character.
+To encode any metadata into filename you need to add `__` (double underscore) after original basename of the file to define explicit separation between them. If you don't have/need original basename you have to start filename with `__` anyway. This looks ugly but I don't see a better solution to reliably distinguish metadata part while allowing arbitrary original basename to be preserved. That original basename is stored in `Extra:FileID` tag if it is not empty.
+In the metadata part of the filename tag/block sections are separated by `_` (single underscore). Each tag/block is started with a single letter prefix (which represents its ID) followed immediately after by tag/block value in its dedicated format.
+
 |  Prefix  | Format | Tags | Description |
-| :--------: | -------- |  -------- |  -------- | 
-|  | `<FILM_ID>-<FRAME_NUM>` | `ReelName`, `ImageNumber`, `Extra:FilmID`, `Extra:FilmFrameNumber` | film identifier and frame number in film (**mandatory** with **no prefix**!) |
-| `S` | `<STRIP_ID>-<FRAME_NUM_IN_STRIP>` | `Extra:StripID`, `Extra:StripFrameNumber` | film strip identifier and frame number on that strip |
+| :--------: | -------- |  -------- |  -------- |
+| `F` | `<FILM_ID>[-<FRAME_NUM_ON_FILM>]` | `ReelName`, `ImageNumber`, `Extra:FilmID`, `Extra:FilmFrameNumber` | film identifier and frame number on that film |
+| `S` | `<STRIP_ID>[-<FRAME_NUM_ON_STRIP>]` | `Extra:StripID`, `Extra:StripFrameNumber` | film strip identifier and frame number on that strip |
+| `N` | `<IMAGE_NUMBER>` | `ImageNumber` | image number (have priority over frame number on film ) |
+|     |     |     |     |
 | `C` | `<LEFT>[-<TOP>[-<WIDTH>[-<HEIGHT>]]]` | `ImageTransform:Enabled`, `ImageTransform:Crop` | image transformation is enabled and crop area defined |
 | `R` | `<ROTATION_CW{ANGLE\|90CW\|90CCW}>[<FLIP{H\|V}>]` | `ImageTransform:Enabled`, `ImageTransform:Rotate`, `ImageTransform:Flip` | image transformation is enabled, rotation angle and/or flip axis are defined |
-| `Z` | `<COMPRESSION_NAME>` | `ImageTransform:Enabled`, `ImageTransform:Compression` | image transformation is enabled and image compression defined |
-| `O` | `<VALUE{<CODE>\|90CW\|90CCW\|180}>` | `Orientation` | image orientation, either numeric code from corresponding dictionary or predefined human-friendly values |
-| `D` | `<YYYY>[-<MM>[-<DD>[-<hh>[-<mm>[-<ss>[@<tzo_hh>[-<tzo_mm>]]]]]]]` | `DateTimeOriginal`, `OffsetTimeOriginal` | datetime of original image being taken + timezone offset |
-| `T` | `<EXPOSURE_TIME{<TIME_IN_SECONDS>\|'<DENOMINATOR>}>` | `ExposureTime`, `ShutterSpeedValue` | exposure-time/shutter-speed in seconds (float) or 1/denominator prefixed by `'` character |
-| `A` | `<F-NUMBER>` | `FNumber`, `ApertureValue` | f-number/aperture value (float) |
+| `Z` | `<COMPRESSION_ID>` | `ImageTransform:Enabled`, `ImageTransform:Compression` | image transformation is enabled and image compression defined |
+|     |     |     |     |
+| `T` | `<EXPOSURE_TIME{<TIME_IN_SECONDS>\|'<DENOMINATOR>}>` | `ExposureTime` | exposure-time/shutter-speed in seconds (float) or 1/denominator prefixed by `'` character |
+| `A` | `<F-NUMBER>` | `FNumber` | f-number/aperture value (float) |
 | `I` | `<ISO_VALUE>` | `ISO` | ISO value |
-| `F` | `<EXIF_FLASH_VALUE_NUMBER>` | `EXIF:Flash` | flash state, numeric code from corresponding dictionary |
-| `M` | `[<MODEL>][@<MAKER>]` | `Make`, `Model` | camera model and/or maker |
+| `X` | `<EXIF_FLASH_VALUE_NUMBER>` | `EXIF:Flash` | flash state, numeric code from corresponding dictionary |
+| `O` | `<VALUE{<CODE>\|90CW\|90CCW\|180}>` | `Orientation` | image orientation, either numeric code from corresponding dictionary or predefined human-friendly values |
 | `L` | `<FOCAL_LENGTH>` | `FocalLength` | lens focal length |
+|     |     |     |     |
+| `M` | `[<MODEL>][@<MAKER>]` | `Make`, `Model` | camera model and/or maker |
+| `D` | `<YYYY>[-<MM>[-<DD>[-<hh>[-<mm>[-<ss>[@<tzo_hh>[-<tzo_mm>]]]]]]]` | `DateTimeOriginal`, `OffsetTimeOriginal` | datetime of original image being taken + timezone offset |
 | `G` | `<{+\|-\|N\|S}LATITUDE_DEG>,<{+\|-\|E\|W}LONGITUDE_DEG>[,<ALTITUDE_M>]` | `GPSLatitude`, `GPSLongitude`, `GPSAltitude` | GNSS coordinates and altitude, either signed or prefixed value in degrees |
-| `U` | `<USER_COMMENT>` | `UserComment` | user comment (use `&#95;` as underscore in a value) |
-| `N` | `<IMAGE_DESCRIPTION>` | `ImageDescription` | image description (use `&#95;` as underscore in a value) |
+|     |     |     |     |
 | `H` | `<IMAGE_TITLE>` | `ImageTitle` | image title (use `&#95;` as underscore in a value) |
+| `K` | `<IMAGE_DESCRIPTION>` | `ImageDescription` | image description (use `&#95;` as underscore in a value) |
+| `U` | `<USER_COMMENT>` | `UserComment` | user comment (use `&#95;` as underscore in a value) |
 
-<ins>Example:</ins> `1337-01_S1-1_C82-126-4096-2656_F25_O8_D1985-10-26-01-21@-7_G34.006100,-117.930600.tif`
+<ins>Example:</ins> `img088__F1337-01_S1-1_C82-126-4096-2656_X25_O8_D1985-10-26-01-21@-7_G34.006100,-117.930600.tif`
 
 ### Command line arguments
 `exif-writer.py <base_dir> <output_path> [options ...]`
