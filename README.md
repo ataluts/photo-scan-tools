@@ -78,8 +78,8 @@ In the metadata part of the filename tag/block sections are separated by `_` (si
 | `R` | `<ROTATION_CW{ANGLE\|90CW\|90CCW}>[<FLIP{H\|V}>]` | `ImageTransform:Enabled`, `ImageTransform:Rotate`, `ImageTransform:Flip` | image transformation is enabled, rotation angle and/or flip axis are defined |
 | `Z` | `<COMPRESSION_ID>` | `ImageTransform:Enabled`, `ImageTransform:Compression` | image transformation is enabled and image compression defined |
 |     |     |     |     |
-| `T` | `<EXPOSURE_TIME{<TIME_IN_SECONDS>\|'<DENOMINATOR>}>` | `ExposureTime` | exposure-time/shutter-speed in seconds (float) or 1/denominator prefixed by `'` character |
-| `A` | `<F-NUMBER>` | `FNumber` | f-number/aperture value (float) |
+| `T` | `<EXPOSURE_TIME{<TIME_IN_SECONDS>\|'<DENOMINATOR>}>` | `ExposureTime` | exposure-time in seconds (float) or 1/denominator prefixed by `'` character |
+| `A` | `<F-NUMBER>` | `FNumber` | f-number value (float) |
 | `I` | `<ISO_VALUE>` | `ISO` | ISO value |
 | `X` | `<EXIF_FLASH_VALUE_NUMBER>` | `EXIF:Flash` | flash state, numeric code from corresponding dictionary |
 | `O` | `<VALUE{<CODE>\|90CW\|90CCW\|180}>` | `Orientation` | image orientation, either numeric code from corresponding dictionary or predefined human-friendly values |
@@ -93,7 +93,7 @@ In the metadata part of the filename tag/block sections are separated by `_` (si
 | `K` | `<IMAGE_DESCRIPTION>` | `ImageDescription` | image description (use `&#95;` as underscore in a value) |
 | `U` | `<USER_COMMENT>` | `UserComment` | user comment (use `&#95;` as underscore in a value) |
 
-<ins>Example:</ins> `img088__F1337-01_S1-1_C82-126-4096-2656_X25_O8_D1985-10-26-01-21@-7_G34.006100,-117.930600.tif`
+<ins>Example:</ins> `img088__F1337-01_S1-1_C82-126-4096-2656_X25_O8_D1985-10-26-01-21@-7_G33.991973,-117.927513.tif`
 
 ### Command line arguments
 `exif-writer.py <base_dir> <output_path> [options ...]`
