@@ -10,8 +10,9 @@ from tzlocal import get_localzone_name
 from enum import Enum
 import locale, copy
 import ast, re
+import html
 
-_module_date = datetime(2025, 6, 19)
+_module_date = datetime(2025, 6, 25)
 _module_designer = "Alexander Taluts"
 
 #Exiftool path
@@ -27,10 +28,10 @@ class SafeDict(dict):
 
 #Marker options for tag values 
 class Marker(Enum):
-    MANDATORY   = '<MANDATORY>'     #error will be raised if tag value won't be assigned
-    OPTIONAL    = '<OPTIONAL>'      #tag will not be added if its value wasn't assigned
+    MANDATORY   = '<MANDATORY>'     #error will be raised if tag value won't be acquired
+    OPTIONAL    = '<OPTIONAL>'      #tag will be added only if its value will be acquired
     AUTO        = '<AUTO>'          #value will be acquired by the script automatically
-    SKIP        = '<SKIP>'          #tag will not be added but will remain if already existed in the source file
+    SKIP        = '<SKIP>'          #tag will not be added (even if its value will be acquired) but will remain if already existed in the source file
     DELETE      = '<DELETE>'        #tag will be deleted
 
 #EXIF Flash values
@@ -146,7 +147,7 @@ metadata_default = {
     'FNumber'                   : Marker.OPTIONAL,              #0x829D : float                             - aperture F-number
     'ISO'                       : Marker.OPTIONAL,              #0x8827 : int                               - ISO speed rating (film sensitivity)
     'DateTimeOriginal'          : Marker.MANDATORY,             #0x9003 : string {"YYYY:MM:DD hh:mm:ss"}    - original date and time of image being taken (photo was shot)
-    'CreateDate'                : Marker.AUTO,                  #0x9004 : string {"YYYY:MM:DD hh:mm:ss"}    - datetime when photo was digitized (film was scanned)
+    'CreateDate'                : Marker.AUTO,                  #0x9004 : string {"YYYY:MM:DD hh:mm:ss"}    - datetime when photo was digitized (image was scanned)
     'OffsetTime'                : Marker.AUTO,                  #0x9010 : string {"±hh:mm"}                 - time zone for ModifyDate
     'OffsetTimeOriginal'        : Marker.OPTIONAL,              #0x9011 : string {"±hh:mm"}                 - time zone for DateTimeOriginal
     'OffsetTimeDigitized'       : Marker.AUTO,                  #0x9012 : string {"±hh:mm"}                 - time zone for CreateDate
@@ -485,6 +486,32 @@ def metadata_get_file(file_path, strip_whitespace = True, encoding = None):
 
 #Get metadata from paths
 def metadata_get_path(input_path: Path, base_dir: Path):
+    def dto_parse(dto_str):
+        tmp = dto_str.split("@", 1)
+        dt = tmp[0].strip()
+        if len(tmp) > 1 and tmp[1].strip(): dt_offset = tmp[1].strip()
+        else: dt_offset = None
+        if dt:
+            #datetime
+            dt = dt.split("-")
+            for i, value in enumerate(dt):
+                dt[i] = str2int(dt[i])
+            if len(dt) < 6: dt += [0] * (6 - len(dt))
+            #--- check values (to remain correct size)
+            if not (0 <= dt[0] <= 9999): raise ValueError("Error! Datetime year must be 4 digits long.")
+            for value in dt[1:]:
+                if not (0 <= value <= 99): raise ValueError("Error! Datetime component value (except year) must be 2 digits long.")           
+        #timezone offset
+        if dt_offset is not None:
+            dt_offset = dt_offset.split("-", 1)
+            for i, value in enumerate(dt_offset):
+                dt_offset[i] = str2int(dt_offset[i])
+            if len(dt_offset) < 2: dt_offset += [0] * (2 - len(dt_offset))
+            #check values
+            if not (-24 <= dt_offset[0] <= 24): raise ValueError("Error! Datetime offset hours must within ±24.")
+            if not (0 <= dt_offset[1] <= 59): raise ValueError("Error! Datetime offset minutes must be between 0 and 59.")
+        return [dt, dt_offset]
+
     #list of variables
     #--- filename
     file_id                   = None        #file identifier
@@ -494,6 +521,7 @@ def metadata_get_path(input_path: Path, base_dir: Path):
     film_id, film_frame     = None, None    #film identifier and frame number in film
     strip_id, strip_frame   = None, None    #film strip identifier and frame number on that strip
     image_number            = None          #image number
+    document_name           = None          #original file name
     #--- image transformations
     crop                    = None          #image crop
     rotate, flip            = None, None    #image rotation and flip
@@ -503,16 +531,22 @@ def metadata_get_path(input_path: Path, base_dir: Path):
     aperture                = None          #aperture
     iso                     = None          #iso
     flash                   = None          #flash
+    exposure_mode           = None          #exposure mode
+    white_balance_mode      = None          #white balance mode
     orientation             = None          #orientation
-    lens_focal_length       = None          #lens focal length
+    focal_length            = None          #focal length
+    focal_length_35mm       = None          #focal length in 35mm equivalent
     #--- environment
-    camera_maker, camera_model                   = None, None           #camera model and maker
-    datetime_original, datetime_original_offset  = None, None           #datetime of original image being taken + timezone offset
-    gnss_latitude, gnss_longitude, gnss_altitude = None, None, None     #GNSS coordinates and altitude
+    camera_maker, camera_model                    = None, None           #camera model and maker
+    datetime_original, datetime_original_offset   = None, None           #datetime of original image being taken + timezone offset
+    datetime_digitized, datetime_digitized_offset = None, None           #datetime when photo was digitized + timezone offset
+    gnss_latitude, gnss_longitude, gnss_altitude  = None, None, None     #GNSS coordinates and altitude
     #--- description
     image_description       = None          #image description
     image_title             = None          #image title
     user_comment            = None          #user comment
+    #--- raw
+    raw                     = {}            #raw (key=value)
 
     #set path variables
     file_name    = input_path.stem
@@ -557,6 +591,10 @@ def metadata_get_path(input_path: Path, base_dir: Path):
             entry_value = entry[1:]
             if entry_value: image_number = str2int(entry_value)
             else: raise ValueError("Error! Image number value not specified.")
+            continue
+        #document name: "Q<DOCUMENT_NAME>" (use &#95; if you need underscore in a value)
+        if entry.startswith('Q'):
+            document_name = entry[1:].replace('&#95;', '_')
             continue
         #image crop: "C<LEFT>[-<TOP>[-<WIDTH>[-<HEIGHT>]]]"
         if entry.startswith('C'):
@@ -623,6 +661,18 @@ def metadata_get_path(input_path: Path, base_dir: Path):
             if entry_value: flash = str2int(entry_value)
             else: raise ValueError("Error! Flash value not specified.")
             continue
+        #exposure mode: "E<EXPOSURE_MODE_NUMBER>"
+        if entry.startswith('E'):
+            entry_value = entry[1:]
+            if entry_value: exposure_mode = str2int(entry_value)
+            else: raise ValueError("Error! Exposure Mode value not specified.")
+            continue
+        #white balance mode: "W<WHITE_BALANCE_MODE_NUMBER>"
+        if entry.startswith('W'):
+            entry_value = entry[1:]
+            if entry_value: white_balance_mode = str2int(entry_value)
+            else: raise ValueError("Error! White Balance Mode value not specified.")
+            continue
         #orientation: "O<VALUE{<CODE>|90CW|90CCW|180}>"
         if entry.startswith('O'):
             entry_value = entry[1:]
@@ -636,11 +686,14 @@ def metadata_get_path(input_path: Path, base_dir: Path):
                     raise ValueError("Error! Invalid orientation value.")
             else: raise ValueError("Error! Orientation value not specified.")
             continue
-        #lens focal length: "L<FOCAL_LENGTH>"
+        #lens focal length: "L[<FOCAL_LENGTH>][@<FOCAL_LENGTH_35MM>]"
         if entry.startswith('L'):
             entry_value = entry[1:]
-            if entry_value: lens_focal_length = str2int(entry_value)
-            else: raise ValueError("Error! Lens focal length value not specified.")
+            tmp = entry_value.split("@", 1)
+            if tmp[0]: focal_length = str2int(tmp[0])
+            if len(tmp) > 1 and tmp[1]: focal_length_35mm = str2int(tmp[1])
+            if focal_length is None and focal_length_35mm is None:
+                raise ValueError("Error! Lens focal length value not specified.")
             continue
         #camera model and maker: "M[<MODEL>][@<MAKER>]"
         if entry.startswith('M'):
@@ -653,30 +706,17 @@ def metadata_get_path(input_path: Path, base_dir: Path):
         if entry.startswith('D'):
             entry_value = entry[1:]
             if entry_value:
-                tmp = entry_value.split("@", 1)
-                datetime_original = tmp[0].strip()
-                if len(tmp) > 1 and tmp[1].strip(): datetime_original_offset = tmp[1].strip()
-                if datetime_original:
-                    #datetime
-                    datetime_original = datetime_original.split("-")
-                    for i, value in enumerate(datetime_original):
-                        datetime_original[i] = str2int(datetime_original[i])
-                    if len(datetime_original) < 6: datetime_original += [0] * (6 - len(datetime_original))
-                    #--- check values (to remain correct size)
-                    if not (0 <= datetime_original[0] <= 9999): raise ValueError("Error! Datetime year must be 4 digits long.")
-                    for value in datetime_original[1:]:
-                        if not (0 <= value <= 99): raise ValueError("Error! Datetime component value (except year) must be 2 digits long.")           
-                #timezone offset
-                if datetime_original_offset is not None:
-                    datetime_original_offset = datetime_original_offset.split("-", 1)
-                    for i, value in enumerate(datetime_original_offset):
-                        datetime_original_offset[i] = str2int(datetime_original_offset[i])
-                    if len(datetime_original_offset) < 2: datetime_original_offset += [0] * (2 - len(datetime_original_offset))
-                    #check values
-                    if not (-24 <= datetime_original_offset[0] <= 24): raise ValueError("Error! Datetime offset hours must within ±24.")
-                    if not (0 <= datetime_original_offset[1] <= 59): raise ValueError("Error! Datetime offset minutes must be between 0 and 59.")
+                datetime_original, datetime_original_offset = dto_parse(entry_value)
             else:
-                raise ValueError("Error! Datetime value not specified.")
+                raise ValueError("Error! Datetime Original value not specified.")
+            continue
+        #datetime when photo was digitized + timezone offset: "B<YYYY>[-<MM>[-<DD>[-<hh>[-<mm>[-<ss>[@<tzo_hh>[-<tzo_mm>]]]]]]]"
+        if entry.startswith('B'):
+            entry_value = entry[1:]
+            if entry_value:
+                datetime_digitized, datetime_digitized_offset = dto_parse(entry_value)
+            else:
+                raise ValueError("Error! Datetime Digitized value not specified.")
             continue
         #GNSS coordinates and altitude: "G<{+|-|N|S}LATITUDE_DEG>,<{+|-|E|W}LONGITUDE_DEG>[,<ALTITUDE_M>]"
         if entry.startswith('G'):
@@ -716,6 +756,16 @@ def metadata_get_path(input_path: Path, base_dir: Path):
         if entry.startswith('U'):
             user_comment = entry[1:].replace('&#95;', '_')
             continue
+        #raw (key=value pair): "#<TAG_NAME>=<TAG_VALUE>"
+        if entry.startswith('#'):
+            entry_value = entry[1:]
+            if '=' in entry_value:
+                raw_key, raw_value = entry_value.split('=', 1)
+                raw_key = html.unescape(raw_key)
+                raw[raw_key] = raw_value.replace('&#95;', '_')
+            else:
+                raise ValueError("Error! Raw tag can't be parsed.")
+            continue
 
     result = {}
     #--- filename
@@ -734,6 +784,7 @@ def metadata_get_path(input_path: Path, base_dir: Path):
     if strip_id is not None: result['Extra:StripID'] = strip_id
     if strip_frame is not None: result['Extra:StripFrameNumber'] = strip_frame
     if image_number is not None: result['ImageNumber'] = image_number
+    if document_name is not None: result['DocumentName'] = document_name
     #--- image transformations
     if crop is not None:
         result['ImageTransform:Crop'] = crop
@@ -754,13 +805,18 @@ def metadata_get_path(input_path: Path, base_dir: Path):
     if aperture is not None: result['FNumber'] = aperture
     if iso is not None: result['ISO'] = iso
     if flash is not None: result['EXIF:Flash'] = exif_flash_enum[flash]
+    if exposure_mode is not None: result['ExposureMode'] = exif_exposuremode_enum[exposure_mode]
+    if white_balance_mode is not None: result['WhiteBalance'] = exif_whitebalance_enum[white_balance_mode]
     if orientation is not None: result['Orientation'] = exif_orientation_enum[orientation]
-    if lens_focal_length is not None: result['FocalLength'] = lens_focal_length
+    if focal_length is not None: result['FocalLength'] = focal_length
+    if focal_length_35mm is not None: result['FocalLengthIn35mmFormat'] = focal_length_35mm
     #--- environment
     if camera_maker is not None: result['Make'] = camera_maker
     if camera_model is not None: result['Model'] = camera_model
     if datetime_original is not None: result['DateTimeOriginal'] = f"{datetime_original[0]:04d}:{datetime_original[1]:02d}:{datetime_original[2]:02d} {datetime_original[3]:02d}:{datetime_original[4]:02d}:{datetime_original[5]:02d}"
     if datetime_original_offset is not None: result['OffsetTimeOriginal'] = f"{datetime_original_offset[0]:+03d}:{datetime_original_offset[1]:02d}"
+    if datetime_digitized is not None: result['CreateDate'] = f"{datetime_digitized[0]:04d}:{datetime_digitized[1]:02d}:{datetime_digitized[2]:02d} {datetime_digitized[3]:02d}:{datetime_digitized[4]:02d}:{datetime_digitized[5]:02d}"
+    if datetime_digitized_offset is not None: result['OffsetTimeDigitized'] = f"{datetime_digitized_offset[0]:+03d}:{datetime_digitized_offset[1]:02d}"
     if gnss_latitude is not None: result['GPSLatitude'] = gnss_latitude
     if gnss_longitude is not None: result['GPSLongitude'] = gnss_longitude
     if gnss_altitude is not None: result['GPSAltitude'] = gnss_altitude
@@ -768,6 +824,8 @@ def metadata_get_path(input_path: Path, base_dir: Path):
     if image_description is not None: result['ImageDescription'] = image_description
     if image_title is not None: result['ImageTitle'] = image_title
     if user_comment is not None: result['UserComment'] = user_comment
+    #--- raw
+    result.update(raw)
 
     return result
 
@@ -923,7 +981,7 @@ def metadata_update_imagehistory(metadata):
 #Update metadata values based on conditions
 def metadata_update_conditional(metadata):
     if metadata.get('Make', None) == "Panasonic" and (metadata.get('Model', None) == 'C-D325EF' or metadata.get('Model', None) == 'C-325EF'):
-        #Camera = Panasonic C-(D)325EF
+        #Camera == Panasonic C-(D)325EF
         #flash built-in automatic (set as "Auto, Did not fire" by default)
         if tag_iswritable('EXIF:Flash', metadata) and isinstance(metadata['EXIF:Flash'], Marker):
             metadata['EXIF:Flash'] = exif_flash_enum[24]
@@ -1084,7 +1142,7 @@ def main():
     metafile = args.metafile
     exiftool_find(args.exiftool)
 
-    #if existing directory is provided as an output use it as base directory to mirror base directory structure
+    #if existing directory is provided as an output, use it as base directory to mirror base directory structure
     if output_path.is_dir():
         output_path = output_path / r'{Extra:FilePath}'
 

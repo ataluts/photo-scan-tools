@@ -21,7 +21,7 @@ These scripts were developed for a one-off task and are tailored to specific inp
 The main script from the set. **Non-destructively** crops/rotates/flips images and inserts EXIF metadata in them.
 
 ### Metadata:
-Script processes metadata in a python dictionary form. Keys of the metadata dictionary are equal to tag names. Those which are intended for exiftool are provided to it as-is at the step of command build-up. Also there are extra tags added to this dictionary (for unification of workflow) containing settings for script workflow, image transformations and other service data. All these extra tags are stripped out of this dictionary before exiftool command build-up.
+Script processes metadata in a python dictionary form. Keys of the metadata dictionary are equal to tag names. Those which are intended for exiftool are provided to it as-is at the step of command build-up. Also there are extra tags added to this dictionary (for unification of workflow) containing settings for script workflow, image transformations and other service data. All these extra tags are stripped out of this dictionary before exiftool command build-up. Exiftool is called with `-E` option so HTML escape characters can be used in tag values.
 
 #### Build-up concept:
 Script gathers metadata for the particular image file from various sources on a step-by-step basis appending (or updating) values on every step. Here is a flow of this process:
@@ -30,10 +30,10 @@ Script gathers metadata for the particular image file from various sources on a 
 3. Updated from the data embedded in the image filename (`metadata_get_path` function);
 4. Updated from the scanner metadata embedded in the image itself (`metadata_get_scanner` function);
 5. Filled by the script based on predefined conditions and values of other tags; (`metadata_update_conditional` function);
-6. Automatically filled by the script, for example file modify date of GPS reference tags (`metadata_autofill` function).
+6. Automatically filled by the script, for example file modify date or GPS reference tags (`metadata_autofill` function).
 
 <ins>For example:</ins><br/>
-You have scanned images from multiple film rolls from several cameras. You put images of each film roll in its separate directory and all these directories are in a respectful directory corresponding to a camera. And all these directories are inside a base directory containing all the scans. So you have a hierarchical structure. Now you can do the following:
+You have scanned images from multiple film rolls from several cameras. You put images of each film roll in its dedicated directory and all these directories are in a respectful directory corresponding to a camera. And all these directories are inside a base directory containing all the scans. So you have a hierarchical structure. Now you can do the following:
 1. Set default tag values in the script itself like `FileSource`, `Orientation`, etc. but mostly `Marker` for tag placeholders - these values will apply to all images processed by the script;
 2. Update metadata hierarchically:
     1. Put metafile into base directory with `ColorSpace`, `Artist`, `Copyright`, etc. tags - these values will be applied to all images in that base directory;
@@ -51,10 +51,10 @@ EXIF tag `0x9213` `ImageHistory` is treated in a special way. It is built by the
 While looking into EXIF specification tag list and observing all that zoo of tags I decided to define a list of meaningful tags in the script and ability to lock that list with `Script:LockTagList` option - meaning any tags outside that list specified anywhere in metadata build-up process will be simply ignored. To assign values to the tags in that list a `Marker` concept was introduced. If there is no default predefined value for a tag its value can be assigned to a Marker value which will tell the script about tag behaviour.
 |  Value  | Description |
 | -------- | -------- | 
-| `Marker.MANDATORY` | Error will be raised if tag value won't be assigned |
-| `Marker.OPTIONAL`  | Tag will not be added if its value wasn't assigned |
+| `Marker.MANDATORY` | Error will be raised if tag value won't be acquired |
+| `Marker.OPTIONAL`  | Tag will be added only if its value will be acquired |
 | `Marker.AUTO`      | Tag value will be acquired by the script automatically |
-| `Marker.SKIP`      | Tag will not be added but will remain if already existed in the source file |
+| `Marker.SKIP`      | Tag will not be added (even if its value will be acquired) but will remain if already existed in the source file |
 | `Marker.DELETE`    | Tag will be deleted from the result |
 
 #### Assignation format
@@ -66,13 +66,14 @@ Tag name and value are set by `<tag_name> = <tag_value>` pair on a dedicated lin
 
 ##### in filename:
 To encode any metadata into filename you need to add `__` (double underscore) after original basename of the file to define explicit separation between them. If you don't have/need original basename you have to start filename with `__` anyway. This looks ugly but I don't see a better solution to reliably distinguish metadata part while allowing arbitrary original basename to be preserved. That original basename is stored in `Extra:FileID` tag if it is not empty.
-In the metadata part of the filename tag/block sections are separated by `_` (single underscore). Each tag/block is started with a single letter prefix (which represents its ID) followed immediately after by tag/block value in its dedicated format.
+In the metadata part of the filename tag/block sections are separated by `_` (single underscore). Each tag/block is started with a single character prefix (which represents its ID) followed immediately after by tag/block value in its dedicated format.
 
 |  Prefix  | Format | Tags | Description |
 | :--------: | -------- |  -------- |  -------- |
 | `F` | `<FILM_ID>[-<FRAME_NUM_ON_FILM>]` | `ReelName`, `ImageNumber`, `Extra:FilmID`, `Extra:FilmFrameNumber` | film identifier and frame number on that film |
 | `S` | `<STRIP_ID>[-<FRAME_NUM_ON_STRIP>]` | `Extra:StripID`, `Extra:StripFrameNumber` | film strip identifier and frame number on that strip |
-| `N` | `<IMAGE_NUMBER>` | `ImageNumber` | image number (have priority over frame number on film ) |
+| `N` | `<IMAGE_NUMBER>` | `ImageNumber` | image number (have priority over frame number on film) |
+| `Q` | `<DOCUMENT_NAME>` | `DocumentName` | original file name |
 |     |     |     |     |
 | `C` | `<LEFT>[-<TOP>[-<WIDTH>[-<HEIGHT>]]]` | `ImageTransform:Enabled`, `ImageTransform:Crop` | image transformation is enabled and crop area defined |
 | `R` | `<ROTATION_CW{ANGLE\|90CW\|90CCW}>[<FLIP{H\|V}>]` | `ImageTransform:Enabled`, `ImageTransform:Rotate`, `ImageTransform:Flip` | image transformation is enabled, rotation angle and/or flip axis are defined |
@@ -82,16 +83,21 @@ In the metadata part of the filename tag/block sections are separated by `_` (si
 | `A` | `<F-NUMBER>` | `FNumber` | f-number value (float) |
 | `I` | `<ISO_VALUE>` | `ISO` | ISO value |
 | `X` | `<EXIF_FLASH_VALUE_NUMBER>` | `EXIF:Flash` | flash state, numeric code from corresponding dictionary |
+| `E` | `<EXPOSURE_MODE_NUMBER>` | `ExposureMode` | exposure mode, numeric code from corresponding dictionary |
+| `W` | `<WHITE_BALANCE_MODE_NUMBER>` | `WhiteBalance` | white balance mode, numeric code from corresponding dictionary |
 | `O` | `<VALUE{<CODE>\|90CW\|90CCW\|180}>` | `Orientation` | image orientation, either numeric code from corresponding dictionary or predefined human-friendly values |
-| `L` | `<FOCAL_LENGTH>` | `FocalLength` | lens focal length |
+| `L` | `[<FOCAL_LENGTH>][@<FOCAL_LENGTH_35MM>]` | `FocalLength`, `FocalLengthIn35mmFormat` | lens focal length and its 35mm equivalent value |
 |     |     |     |     |
 | `M` | `[<MODEL>][@<MAKER>]` | `Make`, `Model` | camera model and/or maker |
 | `D` | `<YYYY>[-<MM>[-<DD>[-<hh>[-<mm>[-<ss>[@<tzo_hh>[-<tzo_mm>]]]]]]]` | `DateTimeOriginal`, `OffsetTimeOriginal` | datetime of original image being taken + timezone offset |
-| `G` | `<{+\|-\|N\|S}LATITUDE_DEG>,<{+\|-\|E\|W}LONGITUDE_DEG>[,<ALTITUDE_M>]` | `GPSLatitude`, `GPSLongitude`, `GPSAltitude` | GNSS coordinates and altitude, either signed or prefixed value in degrees |
+| `B` | `<YYYY>[-<MM>[-<DD>[-<hh>[-<mm>[-<ss>[@<tzo_hh>[-<tzo_mm>]]]]]]]` | `CreateDate`, `OffsetTimeDigitized` | datetime when photo was digitized + timezone offset |
+| `G` | `<{\|-\|N\|S}LATITUDE_DEG>,<{\|-\|E\|W}LONGITUDE_DEG>[,<ALTITUDE_M>]` | `GPSLatitude`, `GPSLongitude`, `GPSAltitude` | GNSS coordinates and altitude, either signed or prefixed value in degrees |
 |     |     |     |     |
-| `H` | `<IMAGE_TITLE>` | `ImageTitle` | image title (use `&#95;` as underscore in a value) |
-| `K` | `<IMAGE_DESCRIPTION>` | `ImageDescription` | image description (use `&#95;` as underscore in a value) |
-| `U` | `<USER_COMMENT>` | `UserComment` | user comment (use `&#95;` as underscore in a value) |
+| `H` | `<IMAGE_TITLE>` | `ImageTitle` | image title |
+| `K` | `<IMAGE_DESCRIPTION>` | `ImageDescription` | image description |
+| `U` | `<USER_COMMENT>` | `UserComment` | user comment |
+|     |     |     |     |
+| `#` | `<TAG_NAME>=<TAG_VALUE>` |    | raw input of tags, all HTML escape characters will be decoded in tag name |
 
 <ins>Example:</ins> `img088__F1337-01_S1-1_C82-126-4096-2656_X25_O8_D1985-10-26-01-21@-7_G33.991973,-117.927513.tif`
 
