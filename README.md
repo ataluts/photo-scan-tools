@@ -144,5 +144,5 @@ Repeat this process for all image files, and then run this script on them. It wi
 | `--search`    | `dir`  |  | Base directory with cropped (masked) images to search for crop area |
 | `--rename` | `dir` |  | Rename files using detected or loaded crop data. Provide path to base directory |
 | `--unname` | `dir` |  | Revert crop-data-based renaming of files. Provide path to base directory |
-| `--crop-color` | `R,G,B`  | `0,0,0` | RGB color used for crop mask. Use values consistent with image color depth |
+| `--crop-color` | `int` | `0,0,0` | Color used for crop mask. Single integer for grayscale, comma-separated for RGB. Use values consistent with image color depth |
 | `--check-multiple` | `int`  | `8` | check that width and height are divisible by N |

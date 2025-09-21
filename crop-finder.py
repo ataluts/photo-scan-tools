@@ -2,14 +2,14 @@ import sys
 import csv
 import argparse
 from pathlib import Path
-from PIL import Image
+import tifffile
 import numpy as np
 import fnmatch
 import re
 
 def find_crop_box(cropped_img_array, crop_color):
     # Ensure crop_color has same dtype as image array
-    crop_color = np.array(crop_color, dtype=cropped_img_array.dtype)
+    crop_color = np.array([np.array([c], dtype=cropped_img_array.dtype)[0] for c in crop_color], dtype=cropped_img_array.dtype)
     mask = np.all(cropped_img_array == crop_color, axis=-1)
     if not np.any(mask):
         return None
@@ -48,12 +48,41 @@ def process_directory(base_dir, crop_color, depth, check_multiple, file_patterns
         relative_path = path.relative_to(base_dir).as_posix()
         print(f"{relative_path}: ", end="")
         try:
-            with Image.open(path) as img:
-                cropped_array = np.array(img)
+            cropped_array = tifffile.imread(path)
 
-            if cropped_array.ndim != 3 or cropped_array.shape[2] != 3:
+            #Check image channels and validate crop_color length
+            if cropped_array.ndim == 2:
+                #grayscale
+                if len(crop_color) != 1:
+                    status = "error"
+                    print(f"Grayscale image, crop-color must be single integer. Skipping {relative_path}")
+                    crop_data.append([f"{relative_path}", -1, -1, -1, -1, status])
+                    continue
+            elif cropped_array.ndim == 3 and cropped_array.shape[2] == 3:
+                #RGB
+                if len(crop_color) != 3:
+                    status = "error"
+                    print(f"RGB image, crop-color must be three integers. Skipping {relative_path}")
+                    crop_data.append([f"{relative_path}", -1, -1, -1, -1, status])
+                    continue
+            else:
+                #unknown
                 status = "error"
                 print("not a 3-channel RGB image!")
+                crop_data.append([f"{relative_path}", -1, -1, -1, -1, status])
+                continue
+
+            #Validate crop_color against dtype range for this image
+            dtype = cropped_array.dtype
+            if not np.issubdtype(dtype, np.integer):
+                status = "error"
+                print(f"Unsupported image dtype: {dtype}. Only integer TIFFs (8/16-bit) are supported.")
+                crop_data.append([f"{relative_path}", -1, -1, -1, -1, status])
+                continue
+            max_value = np.iinfo(dtype).max
+            if not all(0 <= c <= max_value for c in crop_color):
+                status = "error"
+                print(f"crop-color {crop_color} out of range for {dtype} (0..{max_value}), error")
                 crop_data.append([f"{relative_path}", -1, -1, -1, -1, status])
                 continue
 
@@ -112,6 +141,8 @@ def rename_files_from_data(rename_dir: Path, crop_data, file_patterns, depth):
                 continue
 
             suffix = f"_C{left}-{top}-{width}-{height}"
+            if '__' not in file_path.stem:
+                suffix = '_' + suffix
             new_name = file_path.stem + suffix + file_path.suffix
             new_path = file_path.with_name(new_name)
             file_path.rename(new_path)
@@ -134,6 +165,8 @@ def unname_files(rename_dir: Path, file_patterns, depth):
         new_stem = pattern.sub("", file_path.stem)
         if new_stem == file_path.stem:
             continue
+        if new_stem.endswith("_"):
+            new_stem = new_stem[:-1]
         new_path = file_path.with_name(new_stem + file_path.suffix)
         file_path.rename(new_path)
         print(f"{file_path.name} → {new_path.name}")
@@ -146,7 +179,7 @@ def main():
     parser.add_argument("--to-csv", nargs="?", const=True, help="Write crop data to CSV file. Provide filename or use default 'crop.csv' in search dir")
     parser.add_argument("--from-csv", help="Use previously saved crop data in CSV file for renaming")
     parser.add_argument("--dirdepth", type=int, default=-1, help="Depth of folder structure to search (-1 means unlimited, default: -1)")
-    parser.add_argument("--crop-color", type=str, default="0,0,0", help="RGB color used for crop mask (default: 0,0,0). Use values consistent with image color depth")
+    parser.add_argument("--crop-color", type=str, default="0,0,0", help="Color used for crop mask. Single integer for grayscale, comma-separated for RGB (default: 0,0,0). Use values consistent with image color depth")
     parser.add_argument("--check-multiple", type=int, default=8, help="Check that crop dimensions are multiple of this value (default: 8)")
     parser.add_argument("--wildcards", type=str, default="*.tif,*.tiff", help="Comma-separated list of file patterns to process (default: *.tif,*.tiff)")
 
@@ -167,10 +200,10 @@ def main():
 
         try:
             crop_color = tuple(int(c, 0) for c in args.crop_color.split(","))
-            if len(crop_color) != 3 or not all(0 <= c <= 65535 for c in crop_color):
+            if (len(crop_color) != 3 and len(crop_color) != 1) or not all(c >= 0 for c in crop_color):
                 raise ValueError
         except ValueError:
-            print("Error: --crop-color must be three integers (decimal or 0x hex) between 0 and 65535, separated by commas.")
+            print("Error: --crop-color value must be positive integer(s) (decimal or 0x hex).")
             sys.exit(1)
 
         crop_data = process_directory(search_dir, crop_color, args.dirdepth, args.check_multiple, file_patterns)
